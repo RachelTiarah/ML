@@ -1,0 +1,64 @@
+import torch, torch.nn as nn
+import matplotlib.pyplot as plt
+import numpy as np, os
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+os.makedirs("samples", exist_ok=True)
+
+# Real data: points around (1,0), (-1,0), (0,1), (0,-1)
+def sample_real(batch):
+    centers = np.array([[1,0],[-1,0],[0,1],[0,-1]], dtype=np.float32)
+    idx = np.random.randint(0,4,batch)
+    pts = centers[idx] + 0.1*np.random.randn(batch,2).astype(np.float32)
+    return torch.tensor(pts, device=device)
+
+# Generator: noise -> 2D point
+class Generator(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(2,64), nn.ReLU(),
+            nn.Linear(64,64), nn.ReLU(),
+            nn.Linear(64,2)
+        )
+    def forward(self,z): return self.net(z)
+
+# Discriminator: 2D point -> prob
+class Discriminator(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(2,64), nn.LeakyReLU(0.2),
+            nn.Linear(64,64), nn.LeakyReLU(0.2),
+            nn.Linear(64,1), nn.Sigmoid()
+        )
+    def forward(self,x): return self.net(x)
+
+G, D = Generator().to(device), Discriminator().to(device)
+optG = torch.optim.Adam(G.parameters(), lr=2e-4, betas=(0.5,0.999))
+optD = torch.optim.Adam(D.parameters(), lr=2e-4, betas=(0.5,0.999))
+bce = nn.BCELoss()
+
+for it in range(1000):
+    # 1. Train D
+    real = sample_real(128)
+    fake = G(torch.randn(128,2,device=device)).detach()
+    lossD = (bce(D(real), torch.ones(128,1,device=device)) +
+             bce(D(fake), torch.zeros(128,1,device=device))) * 0.5
+    optD.zero_grad(); lossD.backward(); optD.step()
+
+    # 2. Train G
+    z = torch.randn(128,2,device=device)
+    fake = G(z)
+    lossG = bce(D(fake), torch.ones(128,1,device=device))
+    optG.zero_grad(); lossG.backward(); optG.step()
+
+    # Save sample plot every 200 steps
+    if (it+1)%200==0:
+        with torch.no_grad():
+            gen = G(torch.randn(1000,2,device=device)).cpu().numpy()
+            real = sample_real(1000).cpu().numpy()
+            plt.scatter(real[:,0],real[:,1],alpha=0.2)
+            plt.scatter(gen[:,0],gen[:,1],alpha=0.6)
+            plt.savefig(f"samples/iter{it+1}.png"); plt.close()
+            print("Saved sample at iter", it+1)
